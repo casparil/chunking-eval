@@ -1,0 +1,6 @@
+EMBED_PATH = "embed"
+RESULTS_PATH = "results"
+PLOTS_PATH = "plots"
+CHUNK_SIZE = 50_000
+RETRIEVE_K = 1000
+K_VALUES = [1, 3, 5, 10, 20, 100]
