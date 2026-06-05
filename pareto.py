@@ -96,23 +96,8 @@ def _plot_pareto(
         alpha=0.7
     )
 
-    label_offsets = {
-        "enriched_summary": (22, -16),
-        "contextual": (-10, 20),
-    }
-    for method, x, y, ram in zip(plot_methods, docs_per_sec, queries_per_sec, ram_usage):
-        if method in label_offsets:
-            plt.annotate(
-                f"{ram:.1f}",
-                xy=(x, y),
-                xytext=label_offsets[method],
-                textcoords="offset points",
-                ha="center",
-                va="center",
-                fontsize=9,
-            )
-        else:
-            plt.text(x, y, f"{ram:.1f}", ha="center", va="center", fontsize=9)
+    for x, y, ram in zip(docs_per_sec, queries_per_sec, ram_usage):
+        plt.text(x, y, f"{ram:.1f}", ha="center", va="center", fontsize=9)
 
     method_label_offsets = {
         "token": (0, 15),
@@ -120,8 +105,8 @@ def _plot_pareto(
         "enriched_title": (0, -15),
         "late": (0, -25),
         "semantic": (0, 18),
-        "enriched_summary": (1, -25),
-        "contextual": (0, 25),
+        "enriched_summary": (30, -25),
+        "contextual": (0, 20),
     }
     for method, x, y, color in zip(plot_methods, docs_per_sec, queries_per_sec, colors):
         dx, dy = method_label_offsets.get(method, (0, 26))
@@ -130,7 +115,7 @@ def _plot_pareto(
             xy=(x, y),
             xytext=(dx, dy),
             textcoords="offset points",
-            ha="left" if dx > 0 else "right" if dx < 0 else "center",
+            ha="center",
             va="bottom" if dy > 0 else "top" if dy < 0 else "center",
             fontsize=12,
             color=color,
