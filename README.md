@@ -34,7 +34,7 @@ summary-based and contextual chunking.
 To start an evaluation run, execute the command
 ```
 uv run main.py qwen token           # Evaluates token-based chunking using Qwen
-uv run main.py gemma semantic kilt  # Evaluates semantic chunking on KILT NQ using Gemma
+uv run main.py gemma semantic kilt  # Evaluates semantic chunking on KILT using Gemma
 uv run main.py snowflake enriched   # Evaluates context-enriched chunking using Snowflake
 ```
 
