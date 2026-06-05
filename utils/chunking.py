@@ -81,7 +81,7 @@ def _get_splitter(num_tokens: int, overlap: int, threshold:int, splitter_name: s
 
 def get_chunks(
         num_tokens: int, overlap: int, threshold:int, corpus_ids: List[str], splitter_name: str, model_path: str,
-        documents: List[Dict[str, str]], num_gpus: int
+        documents: List[Dict[str, str]], summaries: List[str] | None, num_gpus: int
 ) -> Dict[str, List[str]]:
     """
     Applies the given text splitter to the passed documents and chunks them, returning the created chunks along with
@@ -99,7 +99,11 @@ def get_chunks(
     """
     ids, all_chunks = [], []
     splitter = _get_splitter(num_tokens, overlap, threshold, splitter_name, model_path, num_gpus)
-    chunks = splitter.split_text(documents)
+
+    if isinstance(splitter, ContextEnrichedSplitter) and splitter.summary_splitter is not None and summaries is not None:
+        chunks = splitter.split_text_with_summary(documents, summaries)
+    else:
+        chunks = splitter.split_text(documents)
 
     for idx, doc_chunks in enumerate(chunks):
         ids.extend([f"{corpus_ids[idx]}_{num + 1}" for num in range(len(doc_chunks))])

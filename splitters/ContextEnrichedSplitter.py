@@ -26,6 +26,43 @@ class ContextEnrichedSplitter(AbstractSplitter):
         self.chunk_overlap = chunk_overlap
         self.summary_splitter = summary_splitter
 
+    def _chunk_document(self, doc: Dict[str, str]) -> List[List[str]]:
+        """
+        Splits a document into smaller chunks based on the number of tokens.
+
+        :param doc: The document to split.
+        :return: The list of chunks.
+        """
+        title, text = doc.get("title", "").strip(), doc["text"].strip()
+        tokens = self.tokenizer(text, return_tensors="pt")["input_ids"][0]
+        start_idx = 0
+        chunked_text = []
+
+        while start_idx < len(tokens):
+            start_idx = 0 if start_idx == 0 else start_idx - self.chunk_overlap
+            end_idx = min(start_idx + self.tokens_per_chunk, len(tokens))
+            chunked_text.append(self.tokenizer.decode(tokens[start_idx:end_idx], skip_special_tokens=True))
+            start_idx = end_idx
+
+        return chunked_text
+
+    def split_text_with_summary(self, documents: List[Dict[str, str]], summaries: List[str]) -> List[List[str]]:
+        """
+        Splits the document content into chunks of equal size, then prepends a summary of the document to each chunk.
+
+        :param documents: The documents to be chunked.
+        :param summaries: The summaries of the documents.
+        :return: The created text chunks.
+        """
+        assert (len(documents) == len(summaries))
+        chunks = []
+
+        for doc, summary in zip(documents, summaries):
+            chunked_text = self._chunk_document(doc)
+            chunks.append([f"{summary} {chunk}" for chunk in chunked_text])
+
+        return chunks
+
     def split_text(self, documents: List[Dict[str, str]]) -> List[List[str]]:
         """
         Splits the document content into chunks of equal size, then prepends the document title to each chunk.
@@ -43,16 +80,8 @@ class ContextEnrichedSplitter(AbstractSplitter):
 
         for idx, doc in enumerate(documents):
             summary = None if summaries is None else summaries[idx]
-            title, text = doc.get("title", "").strip(), doc["text"].strip()
-            tokens = self.tokenizer(text, return_tensors="pt")["input_ids"][0]
-            start_idx = 0
-            chunked_text = []
-
-            while start_idx < len(tokens):
-                start_idx = 0 if start_idx == 0 else start_idx - self.chunk_overlap
-                end_idx = min(start_idx + self.tokens_per_chunk, len(tokens))
-                chunked_text.append(self.tokenizer.decode(tokens[start_idx:end_idx], skip_special_tokens=True))
-                start_idx = end_idx
+            title = doc.get("title", "").strip()
+            chunked_text = self._chunk_document(doc)
 
             if summary:
                 chunks.append([f"{summary} {chunk}" for chunk in chunked_text])

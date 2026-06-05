@@ -1,5 +1,6 @@
 import json
 import os
+import resource
 import time
 import tracemalloc
 from typing import List, Dict, Optional, Tuple
@@ -14,7 +15,7 @@ from faiss import IndexFlatIP
 from joblib import Parallel, delayed
 from tqdm_joblib import tqdm_joblib
 
-from config import CHUNK_SIZE, RETRIEVE_K, EMBED_PATH, RESULTS_PATH
+from config import CHUNK_SIZE, RETRIEVE_K, EMBED_PATH, RESULTS_PATH, TEMP_STORE_PATH
 from utils.chunking import apply_late_chunking, get_chunks
 from utils.dataset_loading import load_data
 from models import AbstractModelWrapper, GemmaWrapper, Qwen3Wrapper, SnowflakeWrapper
@@ -39,9 +40,9 @@ def _load_model(model_name: str) -> AbstractModelWrapper:
 
 
 def _generate_corpus_embeddings(
-        num_tokens: int, overlap: int, threshold:int, batch_num: int, corpus_size:int, splitter_name: str,
-        corpus_ids: List[str], corpus_batch: List[Dict[str, str]], index: Optional[IndexFlatIP],
-        model: AbstractModelWrapper
+        num_tokens: int, overlap: int, threshold:int, splitter_name: str, corpus_ids: List[str],
+        corpus_batch: List[Dict[str, str]], index: Optional[IndexFlatIP], model: AbstractModelWrapper,
+        corpus_size: int, batch_num: int,
 ) -> Tuple[List[str], IndexFlatIP, float]:
     """
     Chunks a given batch of documents, creates embeddings for the chunks and adds them to a FAISS index. If the index is
@@ -50,8 +51,6 @@ def _generate_corpus_embeddings(
     :param num_tokens: The maximum number of tokens per chunk.
     :param overlap: The number of overlapping tokens between consecutive chunks.
     :param threshold: The similarity threshold to use for semantic chunking.
-    :param batch_num: The current batch number.
-    :param corpus_size: The total size of the corpus.
     :param splitter_name: The name of the chunking module to use.
     :param corpus_ids: The ids of the documents.
     :param corpus_batch: The documents to chunk and embed.
@@ -64,6 +63,40 @@ def _generate_corpus_embeddings(
     num_gpus = torch.cuda.device_count()
     iterator = range(0, len(corpus_batch) - last_batch_size, batch_size)
     split_tokens = num_tokens
+    save_path = os.path.join(
+        TEMP_STORE_PATH, model.model_path.split("/")[-1], splitter_name, str(num_tokens), str(corpus_size)
+    )
+    os.makedirs(save_path, exist_ok=True)
+    summaries = None
+
+    if os.path.isfile(os.path.join(save_path, f"embeddings_{batch_num}.pt")):
+        embeddings = torch.load(os.path.join(save_path, f"embeddings_{batch_num}.pt"))
+        chunk_ids = pd.read_csv(os.path.join(save_path, f"chunk_ids_{batch_num}.csv"))["chunk_id"].values
+
+        if not index:
+            index = IndexFlatIP(embeddings.shape[1])
+
+        index.add(embeddings)
+        del embeddings
+        return chunk_ids, index, 0
+
+    if splitter_name in ["summary", "enriched"]:
+        summary_dir = os.path.join(TEMP_STORE_PATH, "summaries", str(100), str(corpus_size))
+        if os.path.isdir(summary_dir) and splitter_name == "summary":
+            doc_chunks = pd.read_csv(os.path.join(summary_dir, f"summaries_{batch_num}.csv"))["summary"].values
+            chunk_ids = pd.read_csv(os.path.join(summary_dir, f"chunk_ids_{batch_num}.csv"))["chunk_id"].values
+            assert len(doc_chunks) == len(corpus_batch) == len(chunk_ids)
+            embeddings = model.encode_corpus(doc_chunks).detach().cpu()
+
+            if not index:
+                index = IndexFlatIP(embeddings.shape[1])
+
+            index.add(embeddings)
+            del embeddings
+            return chunk_ids, index, 0
+        elif os.path.isdir(summary_dir):
+            summaries = pd.read_csv(os.path.join(summary_dir, f"summaries_{batch_num}.csv"))["summary"].values
+            assert len(summaries) == len(corpus_batch)
 
     if splitter_name == "late":
         num_tokens = model.max_tokens
@@ -74,7 +107,8 @@ def _generate_corpus_embeddings(
         results = Parallel(n_jobs=4, backend="multiprocessing")(
             delayed(get_chunks)(
                 num_tokens, overlap, threshold, corpus_ids[start_idx:start_idx+batch_size], splitter_name,
-                model.model_path, corpus_batch[start_idx:start_idx+batch_size], num_gpus
+                model.model_path, corpus_batch[start_idx:start_idx+batch_size],
+                summaries if summaries is None else summaries[start_idx:start_idx+batch_size], num_gpus
             ) for start_idx in iterator
         )
 
@@ -94,12 +128,23 @@ def _generate_corpus_embeddings(
         embeddings = model.encode_corpus(doc_chunks).detach().cpu()
     else:
         model_outputs = model.encode_corpus_no_pooling(doc_chunks)
+        chunk_start = time.time()
         embeddings, chunk_ids = apply_late_chunking(model_outputs, split_tokens, chunk_ids)
+        chunk_time += time.time() - chunk_start
+        del model_outputs
+
+    torch.save(embeddings, os.path.join(save_path, f"embeddings_{batch_num}.pt"))
+    df = pd.DataFrame(chunk_ids, columns=["chunk_id"])
+    df.to_csv(os.path.join(save_path, f"chunk_ids_{batch_num}.csv"), index=False)
+    if splitter_name == "summary":
+        df = pd.DataFrame(doc_chunks, columns=["summary"])
+        df.to_csv(os.path.join(save_path, f"summaries_{batch_num}.csv"), index=False)
 
     if not index:
         index = IndexFlatIP(embeddings.shape[1])
 
     index.add(embeddings)
+    del embeddings, doc_chunks
     return chunk_ids, index, chunk_time
 
 
@@ -169,7 +214,7 @@ def get_faiss_index(
     else:
         click.echo(f"Could not find any pre-existing index for corpus size {corpus_size}. Generating embeddings and "
                    f"index. This can take while.")
-        corpus_ids = sorted(corpus, key=lambda k: len(corpus[k]["text"]), reverse=True)
+        corpus_ids = list(corpus.keys())
         corpus = [corpus[cid] for cid in corpus_ids]
         chunk_ids, doc_hashes, chunk_hashes = [], [], []
         index = None
@@ -181,8 +226,8 @@ def get_faiss_index(
             click.echo(f"Encoding batch {batch_num + 1}/{len(iterator)}")
             corpus_end_idx = min(corpus_start_idx + CHUNK_SIZE, len(corpus))
             ids, index, batch_time = _generate_corpus_embeddings(
-                num_tokens, overlap, threshold, batch_num, corpus_size, splitter_name,
-                corpus_ids[corpus_start_idx:corpus_end_idx], corpus[corpus_start_idx:corpus_end_idx], index, model
+                num_tokens, overlap, threshold, splitter_name, corpus_ids[corpus_start_idx:corpus_end_idx],
+                corpus[corpus_start_idx:corpus_end_idx], index, model, corpus_size, batch_num
             )
             chunk_ids.extend(ids)
             chunk_time += batch_time
@@ -206,40 +251,44 @@ def get_faiss_index(
 @click.command()
 @click.argument("model", type=str, default="qwen")
 @click.argument("splitter", type=str, default="token")
+@click.argument("dataset", type=str, default="core")
 @click.argument("tokens", type=int, default=512)
 @click.argument("overlap", type=int, default=25)
 @click.argument("threshold", type=int, default=95)
-def main(model: str, splitter: str, tokens: int, overlap: int, threshold: int):
+def main(model: str, splitter: str, dataset: str, tokens: int, overlap: int, threshold: int):
     """
     Evaluates the performance of different document chunking strategies at increasing corpus size. Performance metrics
     are stored as a JSON file.
 
     :param model: A string representing the embedding model to use.
     :param splitter: A string representing the splitting strategy to use.
+    :param dataset: A string representing the dataset to use, i.e. CoRE or scaled Climate-FEVER.
     :param tokens: An integer representing the maximum number of tokens per chunk.
     :param overlap: An integer representing the number of overlapping tokens between consecutive chunks.
     :param threshold: An integer representing the similarity threshold to use for semantic chunking.
     """
     tracemalloc.start()
     load_dotenv()
-    mp.set_start_method('spawn')
+    mp.set_start_method("spawn")
     os.environ["TOKENIZERS_PARALLELISM"] = "true"
     embed_model = _load_model(model)
-    corpora, queries, qrels, qrels_relevant_only = load_data()
+    corpora, queries, qrels, qrels_relevant_only = load_data(dataset)
     query_ids = list(queries.keys())
     queries = [queries[qid] for qid in queries]
     results = {}
     embed_path = None
-    save_path = os.path.join(RESULTS_PATH, model, splitter)
+    save_path = os.path.join(RESULTS_PATH, model, dataset, splitter)
     os.makedirs(save_path, exist_ok=True)
     messages, index_sizes = [], []
     chunk_time, retrieval_time, index_time, num_chunks = 0, 0, 0, 0
 
     if EMBED_PATH:
-        embed_path = os.path.join(EMBED_PATH, model, splitter)
+        embed_path = os.path.join(EMBED_PATH, model, dataset, splitter)
         os.makedirs(embed_path, exist_ok=True)
 
-    query_embeddings = get_query_embeddings(os.path.join(EMBED_PATH, model), embed_model, queries).detach().cpu()
+    query_embeddings = get_query_embeddings(
+        os.path.join(EMBED_PATH, model, dataset), embed_model, queries
+    ).detach().cpu()
 
     start = time.time()
     for corpus_size in corpora:
@@ -259,6 +308,7 @@ def main(model: str, splitter: str, tokens: int, overlap: int, threshold: int):
         retrieval_start = time.time()
         distances, neighbors = index.search(query_embeddings, RETRIEVE_K)
         retrieval_time += time.time() - retrieval_start
+        del index
 
         for num, (distance, neighbor) in enumerate(zip(distances, neighbors)):
             query_id = query_ids[num]
@@ -294,6 +344,7 @@ def main(model: str, splitter: str, tokens: int, overlap: int, threshold: int):
 
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
+    total_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
     stats = {
         "retrieval_time": retrieval_time,
@@ -302,6 +353,7 @@ def main(model: str, splitter: str, tokens: int, overlap: int, threshold: int):
         "chunk_number": num_chunks,
         "current_memory": current,
         "peak_memory": peak,
+        "max_rss": total_memory,
         "index_sizes": index_sizes
     }
 

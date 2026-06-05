@@ -8,6 +8,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "basemap>=2.0.0",
     "click>=8.3.0",
     "datasets>=4.2.0",
     "dotenv>=0.9.9",
@@ -19,6 +20,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "openai>=1.109.1",
     "pytrec-eval-terrier>=0.5.10",
+    "statsmodels>=0.14.6",
     "torch>=2.9.0",
     "tqdm>=4.67.1",
     "tqdm-joblib>=0.0.5",

@@ -6,8 +6,7 @@ The project's dependencies can be installed in multiple ways.
 
 ### Using uv (recommended)
 
-The project was developed using the [uv](https://docs.astral.sh/uv/) package manager for fast dependency management and
-can be installed using
+The project was developed using the [uv](https://docs.astral.sh/uv/) package manager for fast dependency management and can be installed using
 
 ```
 uv sync
@@ -25,8 +24,8 @@ pip install .
 
 ## Run Evaluation Code
 
-The evaluation code runs supported chunking strategies on the [CoRE](https://huggingface.co/datasets/PaDaS-Lab/CoRE)
-dataset using one of three supported embedding models.
+The evaluation code runs supported chunking strategies on the CoRE and KILT datasets using one of three supported
+embedding models.
 Currently, the supported models are [embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m)
 (requires to accept license agreement), [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) and
 [snowflake-arctic-embed-l-v2.0](https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0).
@@ -35,11 +34,11 @@ summary-based and contextual chunking.
 To start an evaluation run, execute the command
 ```
 uv run main.py qwen token           # Evaluates token-based chunking using Qwen
-uv run main.py gemma semantic       # Evaluates semantic chunking usign Gemma
+uv run main.py gemma semantic kilt  # Evaluates semantic chunking on KILT NQ using Gemma
 uv run main.py snowflake enriched   # Evaluates context-enriched chunking using Snowflake
 ```
 
-The code downloads the CoRE dataset from Hugging Face and uses the chosen model to generate the embeddings in batches.
+The code downloads the respective dataset from Hugging Face and uses the chosen model to generate embeddings in batches.
 Each batch is added to a FAISS index, which is queried for retrieval.
 
 After running the evaluation code, you will find the results in the `results` folder.
@@ -50,6 +49,46 @@ To run LLM-based chunking methods, create a `.env` file, copy the content of the
 empty strings with the actual URL, model name and API key. Any model compatible with the OpenAI API can be used.
 
 ## Extend Code
+
+### Add New Chunking Strategy
+
+Adding new chunking methods requires extending the [AbstractSplitter](splitters/AbstractSplitter.py) class, which
+has a method `split_text()` where you need to add your custom implementation for splitting a list of documents into
+chunks.
+
+````python
+from typing import List, Dict
+
+from splitters.AbstractSplitter import AbstractSplitter
+
+
+class CharacterSplitter(AbstractSplitter):
+
+    def __init__(self, chars_per_chunk: int = 512, char_overlap: int = 25):
+        assert 0 <= char_overlap < chars_per_chunk
+        self.char_overlap = char_overlap
+        self.chars_per_chunk = chars_per_chunk
+
+    def split_text(self, documents: List[Dict[str, str]]) -> List[List[str]]:
+        chunks = []
+        for doc in documents:
+            text = "{} {}".format(doc.get("title", ""), doc["text"]).strip()
+            start_idx = 0
+            doc_chunks = []
+
+            while start_idx < len(text):
+                start_idx = 0 if start_idx == 0 else start_idx - self.char_overlap
+                end_idx = start_idx + self.chars_per_chunk
+                end_idx = min(end_idx, len(text))
+                doc_chunks.append(text[start_idx:end_idx])
+                start_idx = end_idx
+
+            chunks.append(doc_chunks)
+        return chunks
+````
+
+To include the new class in the evaluation, it needs to be registered in the `load_splitter()` method in
+[chunking.py](utils/chunking.py).
 
 ### Add New Model
 
@@ -119,43 +158,3 @@ class CustomModelWrapper(AbstractModelWrapper):
 ```
 
 The wrapper then needs to be registered in the `_load_model()` method of the [main script](main.py).
-
-### Add New Chunking Strategy
-
-Adding new chunking methods requires extending the [AbstractSplitter](splitters/AbstractSplitter.py) class, which
-has a method `split_text()` where you need to add your custom implementation for splitting a list of documents into
-chunks.
-
-````python
-from typing import List, Dict
-
-from splitters.AbstractSplitter import AbstractSplitter
-
-
-class CharacterSplitter(AbstractSplitter):
-
-    def __init__(self, chars_per_chunk: int = 512, char_overlap: int = 25):
-        assert 0 <= char_overlap < chars_per_chunk
-        self.char_overlap = char_overlap
-        self.chars_per_chunk = chars_per_chunk
-
-    def split_text(self, documents: List[Dict[str, str]]) -> List[List[str]]:
-        chunks = []
-        for doc in documents:
-            text = "{} {}".format(doc.get("title", ""), doc["text"]).strip()
-            start_idx = 0
-            doc_chunks = []
-
-            while start_idx < len(text):
-                start_idx = 0 if start_idx == 0 else start_idx - self.char_overlap
-                end_idx = start_idx + self.chars_per_chunk
-                end_idx = min(end_idx, len(text))
-                doc_chunks.append(text[start_idx:end_idx])
-                start_idx = end_idx
-
-            chunks.append(doc_chunks)
-        return chunks
-````
-
-To include the new class in the evaluation, it needs to be registered in the `load_splitter()` method in
-[chunking.py](utils/chunking.py).
