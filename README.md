@@ -1,5 +1,9 @@
 # Evaluating Chunking Strategies
 
+This repository contains the code for the paper: When Is Complex Chunking Worth It? A Multi-Objective Evaluation of Chunking Methods at Scale
+
+[arXiv](https://arxiv.org/abs/2608.16586)
+
 ## Install Dependencies
 
 The project's dependencies can be installed in multiple ways.
@@ -158,3 +162,23 @@ class CustomModelWrapper(AbstractModelWrapper):
 ```
 
 The wrapper then needs to be registered in the `_load_model()` method of the [main script](main.py).
+
+## Citation
+
+If you use this project in your research, please cite the following paper:
+
+```
+@misc{caspari2026complexchunking,
+      title={When Is Complex Chunking Worth It? A Multi-Objective Evaluation of Chunking Methods at Scale}, 
+      author={Laura Caspari and Kanishka Ghosh Dastidar and Michael Dinzinger and Jelena Mitrović and Michael Granitzer},
+      year={2026},
+      eprint={2608.16586},
+      archivePrefix={arXiv},
+      primaryClass={cs.IR},
+      url={https://arxiv.org/abs/2608.16586}, 
+}
+```
+
+## License
+
+This repository is licensed under the MIT License. See the LICENSE file for details.

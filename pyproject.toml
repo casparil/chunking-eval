@@ -3,7 +3,7 @@ name = "chunking"
 version = "0.1.0"
 description = "A project to evaluate the performance of chunking techniques at scale"
 authors = [
-    "anonymous"
+    "Laura Caspari"
 ]
 readme = "README.md"
 requires-python = ">=3.12"
