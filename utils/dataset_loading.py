@@ -99,8 +99,8 @@ def _load_kilt_data(
     :param qrels_only: Whether to load only the qrels or the entire dataset corpus.
     :return: The loaded document corpora, queries and qrels.
     """
-    dataset_queries = load_dataset("anonymous202501/KILT", "queries", split="test")
-    dataset_qrels = load_dataset("anonymous202501/KILT", "qrels", split="default")
+    dataset_queries = load_dataset("PaDaS-Lab/kilt-nq", "queries", split="test")
+    dataset_qrels = load_dataset("PaDaS-Lab/kilt-nq", "qrels", split="default")
 
     qrels, qrels_relevant_only = defaultdict(dict), defaultdict(dict)
     for q in dataset_qrels:
@@ -117,7 +117,7 @@ def _load_kilt_data(
 
     datasets_corpus = {}
     for split_name in KILT:
-        dataset_corpus = load_dataset("anonymous202501/KILT", "corpus", split=split_name)
+        dataset_corpus = load_dataset("PaDaS-Lab/kilt-nq", "corpus", split=split_name)
         datasets_corpus[split_name] = dataset_corpus
 
     corpora = _create_corpus_dict(datasets_corpus, list(KILT.values()))
